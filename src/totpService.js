@@ -88,14 +88,14 @@ app.post('/generate', async (req, res) => {
 
 // Ruta para validar un código TOTP
 app.post('/validate', async (req, res) => {
-    const { user, token } = req.body;
+    const { user, appName, token } = req.body;
 
-    if (!user || !token) return res.status(400).send('Faltan datos para la validación');
+    if (!user || !appName || !token) return res.status(400).send('Faltan datos para la validación');
 
     try {
         const totpCollection = db.collection(TOTP_COLLECTION);
-        const storedSecret = await totpCollection.findOne({ user });
-        if (!storedSecret) return res.status(401).send('Usuario no encontrado');
+        const storedSecret = await totpCollection.findOne({ user, appName });
+        if (!storedSecret) return res.status(401).send('Usuario o aplicación no encontrados');
 
         const verified = speakeasy.totp.verify({
             secret: storedSecret.secret,
@@ -108,6 +108,29 @@ app.post('/validate', async (req, res) => {
         res.status(401).send('TOTP inválido');
     } catch (err) {
         console.error('Error al validar el TOTP:', err.message);
+        res.status(500).send('Error del servidor: ' + err.message);
+    }
+});
+
+// Ruta para generar y devolver el código TOTP de 6 dígitos
+app.post('/generate-totp', async (req, res) => {
+    const { user, appName } = req.body;
+
+    if (!user || !appName) return res.status(400).send('Faltan datos para generar el TOTP');
+
+    try {
+        const totpCollection = db.collection(TOTP_COLLECTION);
+        const storedSecret = await totpCollection.findOne({ user, appName });
+        if (!storedSecret) return res.status(404).send('Usuario o aplicación no encontrados');
+
+        const token = speakeasy.totp({
+            secret: storedSecret.secret,
+            encoding: 'base32'
+        });
+
+        res.json({ token });
+    } catch (err) {
+        console.error('Error al generar el TOTP:', err.message);
         res.status(500).send('Error del servidor: ' + err.message);
     }
 });

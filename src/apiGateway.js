@@ -1,37 +1,66 @@
 const express = require('express');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 const jwt = require('jsonwebtoken');
+const axios = require('axios');
 require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT0 || 3000;
 const JWT_SECRET = process.env.JWT_SECRET;
+const TOTP_SERVICE_URL = process.env.TOTP_SERVICE_URL;
 
 let storedToken = null;
 let tokenExpiration = null;
 const TOKEN_DURATION_MS = 3600000; // 1 hora en milisegundos
 
+// Middleware para parsear el body como JSON
+app.use(express.json());
+
 // Middleware para verificar el token JWT
 const authenticateJWT = (req, res, next) => {
-    const token = req.headers['authorization']?.split(' ')[1]; // Obtener el token del header Authorization
+    const token = req.headers['authorization']?.split(' ')[1];
 
     if (storedToken && token === storedToken && tokenExpiration > Date.now()) {
-        // Token almacenado es válido
-        req.user = jwt.decode(token); // Decodificar el token sin verificar (solo para obtener datos del usuario)
+        req.user = jwt.decode(token);
         next();
     } else if (token) {
         jwt.verify(token, JWT_SECRET, (err, user) => {
             if (err) {
                 return res.status(403).send('Token inválido');
             }
-            // Almacenar el nuevo token y su fecha de expiración
             storedToken = token;
             tokenExpiration = Date.now() + TOKEN_DURATION_MS;
-            req.user = user; // Adjuntar el usuario al request
-            next(); // Continuar al siguiente middleware o ruta
+            req.user = user;
+            next();
         });
     } else {
         res.status(401).send('Token requerido');
+    }
+};
+
+// Middleware para verificar el TOTP
+const authenticateTOTP = async (req, res, next) => {
+    const { user, appName, token } = req.body; // Extraemos directamente desde req.body
+
+    if (!token) {
+        return res.status(400).send('TOTP requerido');
+    }
+
+    try {
+        const response = await axios.post(`${TOTP_SERVICE_URL}/validate`, {
+            user,
+            appName,
+            token,
+        });
+
+        if (response.data == 'TOTP válido') {
+            next();
+        } else {
+            res.status(401).send('TOTP inválido');
+        }
+    } catch (err) {
+        console.error('Error al validar el TOTP:', err.message);
+        res.status(500).send('Error al validar el TOTP');
     }
 };
 
@@ -53,8 +82,8 @@ app.use('/totp', authenticateJWT, createProxyMiddleware({
     },
 }));
 
-// Redirección de solicitudes a Microservicio 3 - Servicio libre (Acceso protegido)
-app.use('/service', authenticateJWT, createProxyMiddleware({
+// Redirección de solicitudes a Microservicio 3 - Servicio libre (Acceso protegido + Validación TOTP)
+app.use('/service', authenticateJWT, authenticateTOTP, createProxyMiddleware({
     target: 'http://localhost:3003',
     changeOrigin: true,
     pathRewrite: {
