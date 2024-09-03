@@ -13,9 +13,6 @@ let storedToken = null;
 let tokenExpiration = null;
 const TOKEN_DURATION_MS = 3600000; // 1 hora en milisegundos
 
-// Middleware para parsear el body como JSON
-app.use(express.json());
-
 // Middleware para verificar el token JWT
 const authenticateJWT = (req, res, next) => {
     const token = req.headers['authorization']?.split(' ')[1];
@@ -40,10 +37,12 @@ const authenticateJWT = (req, res, next) => {
 
 // Middleware para verificar el TOTP
 const authenticateTOTP = async (req, res, next) => {
-    const { user, appName, token } = req.body; // Extraemos directamente desde req.body
+    console.log('Cuerpo de la solicitud:', req.body);
 
-    if (!token) {
-        return res.status(400).send('TOTP requerido');
+    const { user, appName, token } = req.body;
+
+    if (!user || !appName || !token) {
+        return res.status(400).send('Datos requeridos: user, appName, token');
     }
 
     try {
@@ -53,16 +52,17 @@ const authenticateTOTP = async (req, res, next) => {
             token,
         });
 
-        if (response.data == 'TOTP válido') {
+        if (response.data === 'TOTP válido') {
             next();
         } else {
             res.status(401).send('TOTP inválido');
         }
     } catch (err) {
-        console.error('Error al validar el TOTP:', err.message);
+        console.error('Error al validar el TOTP:', err.response?.data || err.message);
         res.status(500).send('Error al validar el TOTP');
     }
 };
+
 
 // Redirección de solicitudes a Microservicio 1 - Auth JWT (Acceso libre)
 app.use('/auth', createProxyMiddleware({
@@ -83,7 +83,7 @@ app.use('/totp', authenticateJWT, createProxyMiddleware({
 }));
 
 // Redirección de solicitudes a Microservicio 3 - Servicio libre (Acceso protegido + Validación TOTP)
-app.use('/service', authenticateJWT, authenticateTOTP, createProxyMiddleware({
+app.use('/service', authenticateJWT, createProxyMiddleware({
     target: 'http://localhost:3003',
     changeOrigin: true,
     pathRewrite: {
